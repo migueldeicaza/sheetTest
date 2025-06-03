@@ -10,9 +10,10 @@ import SwiftUI
 struct ContentView: View {
     @State var showConfiguration = false
     @State var showFloating = true
-    @State var windowPosition = CGPoint(x: 100, y: 100)
-    @State var windowSize = CGSize(width: 300, height: 200)
+    @State var windowPosition: CGPoint = .zero
+    @State var windowSize: CGSize = .zero
     @State var text = ""
+    @State private var hasInitialized = false
     
     var windowContent: some View {
         VStack {
@@ -22,25 +23,64 @@ struct ContentView: View {
         .padding()
         .background(Material.ultraThin)
     }
-    var body: some View {
+    @State var showSheet = true
+    var body3: some View {
         ZStack {
-            Color.yellow
-            VStack {
-                Button("Toggle Floating Window") {
-                    showFloating.toggle()
+            Color.red
+            Button("Toggle") {
+                showSheet = true
+            }
+            .sheet(isPresented: $showSheet) {
+                VStack {
+                    Text("Very long long\nAnother line")
+                        .padding()
+                }.padding()
+                    .presentationBackground(Material.regular)
+                    .presentationDragIndicator(.visible)
+                    .presentationDetents([.large, .medium])
+            }
+        }
+    }
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.yellow
+                VStack {
+                    Button("Toggle Floating Window") {
+                        showFloating.toggle()
+                    }
+                }
+                .sheet(isPresented: $showConfiguration) {
+                    Text("This code will display the Configuration View")
+                }
+                
+                if showFloating {
+                    FloatingWindow(
+                        containerSize: geometry.size,
+                        position: $windowPosition,
+                        size: $windowSize,
+                        isVisible: $showFloating,
+                        content: { windowContent }
+                    )
                 }
             }
-            .sheet(isPresented: $showConfiguration) {
-                Text("This code will display the Configuration View")
-            }
-            
-            if showFloating {
-                FloatingWindow(
-                    position: $windowPosition,
-                    size: $windowSize,
-                    isVisible: $showFloating,
-                    content: { windowContent }
-                )
+            .onAppear {
+                if !hasInitialized {
+                    let containerWidth = geometry.size.width
+                    let containerHeight = geometry.size.height
+                    
+                    windowSize = CGSize(
+                        width: containerWidth / 3,
+                        height: containerHeight/1.2
+                    )
+                    
+                    windowPosition = CGPoint(
+                        x: containerWidth - (windowSize.width / 2),
+                        y: containerHeight / 2
+                    )
+                    
+                    hasInitialized = true
+                }
             }
         }
         .padding()
@@ -48,6 +88,7 @@ struct ContentView: View {
 }
 
 struct FloatingWindow<Content: View>: View {
+    let containerSize: CGSize
     @Binding var position: CGPoint
     @Binding var size: CGSize
     @Binding var isVisible: Bool
@@ -57,13 +98,18 @@ struct FloatingWindow<Content: View>: View {
     @State private var isDragging = false
     @State private var isResizing = false
     @State private var resizeOffset = CGSize.zero
+    @State var resizeDelta = CGSize.zero
     
     var body: some View {
         VStack(spacing: 0) {
             titleBar
             content()
-                .frame(width: size.width, height: size.height - 30)
+                .frame(width: size.width, height: size.height - 44)
         }
+        .overlay(
+            ResizeHandle(size: $size, resizeDelta: $resizeDelta)
+                .position(x: size.width - 10, y: size.height - 10)
+        )
         .frame(width: size.width, height: size.height)
         .background(Material.ultraThin)
         .cornerRadius(12)
@@ -79,61 +125,66 @@ struct FloatingWindow<Content: View>: View {
                 }
                 .onEnded { _ in
                     if isDragging {
-                        position.x += dragOffset.width
-                        position.y += dragOffset.height
+                        let newX = position.x + dragOffset.width
+                        let newY = position.y + dragOffset.height
+                        
+                        position.x = max(size.width/2, min(newX, containerSize.width-size.width/2))
+                        position.y = max(size.height/2, min(newY, containerSize.height-size.height/2))
                         dragOffset = .zero
                         isDragging = false
                     }
                 }
         )
-        .overlay(
-            ResizeHandle(size: $size, isResizing: $isResizing)
-                .position(x: size.width - 10, y: size.height - 10)
-        )
     }
     
     private var titleBar: some View {
         HStack {
+            Menu {
+                
+            } label: {
+                Text("xx")
+            }
+            Spacer()
             Text("Floating Window")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
-            Button("×") {
-                isVisible = false
+            
+            Button(action: {
+                // TODO
+            }) {
+                Text("New")
             }
-            .font(.caption)
+            Button(action: { isVisible = false }) {
+                Image(systemName: "xmark")
+            }
             .foregroundColor(.secondary)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .frame(height: 30)
+        .padding(.top, 4)
+        .frame(height: 44)
         .background(Material.regular)
-        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12))
+        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8))
     }
 }
 
 struct ResizeHandle: View {
     @Binding var size: CGSize
-    @Binding var isResizing: Bool
-    @State private var resizeOffset = CGSize.zero
+    @Binding var resizeDelta: CGSize
     
     var body: some View {
         Rectangle()
-            .fill(Color.gray)
+            .fill(Color.red)
             .frame(width: 20, height: 20)
             .cornerRadius(4)
             .gesture(
                 DragGesture()
                     .onChanged { value in
-                        isResizing = true
-                        resizeOffset = value.translation
-                        size.width = max(200, size.width + value.translation.width - resizeOffset.width)
-                        size.height = max(150, size.height + value.translation.height - resizeOffset.height)
-                        resizeOffset = value.translation
+                        print("here \(value.translation)")
+                        resizeDelta = value.translation
                     }
                     .onEnded { _ in
-                        isResizing = false
-                        resizeOffset = .zero
+                        resizeDelta = .zero
                     }
             )
     }
