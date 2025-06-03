@@ -107,14 +107,15 @@ struct FloatingWindow<Content: View>: View {
                 .frame(width: size.width, height: size.height - 44)
         }
         .overlay(
-            ResizeHandle(size: $size, resizeDelta: $resizeDelta)
-                .position(x: size.width - 10, y: size.height - 10)
-        )
-        .frame(width: size.width, height: size.height)
+            ResizeHandle(size: $size, resizeDelta: $resizeDelta, position: $position))
+        
+        .frame(width: size.width + resizeDelta.width, height: size.height + resizeDelta.height)
         .background(Material.ultraThin)
         .cornerRadius(12)
         .shadow(radius: 10)
-        .position(x: position.x + dragOffset.width, y: position.y + dragOffset.height)
+        .position(
+            x: position.x + dragOffset.width + resizeDelta.width/2,
+            y: position.y + dragOffset.height + resizeDelta.height/2)
         .gesture(
             DragGesture()
                 .onChanged { value in
@@ -171,20 +172,27 @@ struct FloatingWindow<Content: View>: View {
 struct ResizeHandle: View {
     @Binding var size: CGSize
     @Binding var resizeDelta: CGSize
+    @Binding var position: CGPoint
     
     var body: some View {
         Rectangle()
             .fill(Color.red)
             .frame(width: 20, height: 20)
             .cornerRadius(4)
+            .position(x: size.width - 10 + resizeDelta.width/2,
+                      y: size.height - 10 + resizeDelta.height/2)
             .gesture(
                 DragGesture()
                     .onChanged { value in
                         print("here \(value.translation)")
                         resizeDelta = value.translation
                     }
-                    .onEnded { _ in
+                    .onEnded { value in
+                        position.x += value.translation.width/2
+                        position.y += value.translation.height/2
                         resizeDelta = .zero
+                        size.width += value.translation.width
+                        size.height += value.translation.height
                     }
             )
     }
