@@ -43,6 +43,7 @@ struct ContentView: View {
     }
     var body: some View {
         GeometryReader { geometry in
+            let _ = print("Geo=\(geometry.size)")
             ZStack {
                 Color.yellow
                 VStack {
@@ -71,19 +72,19 @@ struct ContentView: View {
                     
                     windowSize = CGSize(
                         width: containerWidth / 3,
-                        height: containerHeight/1.2
+                        height: containerHeight/3
                     )
                     
                     windowPosition = CGPoint(
-                        x: containerWidth - (windowSize.width / 2),
-                        y: containerHeight / 2
+                        x: 100+windowSize.width/2, // containerWidth - (windowSize.width / 2),
+                        y: 100+windowSize.height/2 // containerHeight / 2
                     )
                     
                     hasInitialized = true
                 }
             }
         }
-        .padding()
+        //.padding()
     }
 }
 
@@ -99,17 +100,26 @@ struct FloatingWindow<Content: View>: View {
     @State private var isResizing = false
     @State private var resizeOffset = CGSize.zero
     @State var resizeDelta = CGSize.zero
+    let minSize: CGSize = .init(width: 200, height: 200)
     
     var body: some View {
         VStack(spacing: 0) {
             titleBar
             content()
-                .frame(width: size.width, height: size.height - 44)
+                .frame(width: size.width + resizeDelta.width,
+                       height: size.height - 44 + resizeDelta.height)
         }
         .overlay(
-            ResizeHandle(size: $size, resizeDelta: $resizeDelta, position: $position))
+            ResizeHandle(
+                size: $size,
+                resizeDelta: $resizeDelta,
+                position: $position,
+                containerSize: containerSize
+            )
+        )
         
-        .frame(width: size.width + resizeDelta.width, height: size.height + resizeDelta.height)
+        .frame(width: size.width + resizeDelta.width,
+               height: size.height + resizeDelta.height)
         .background(Material.ultraThin)
         .cornerRadius(12)
         .shadow(radius: 10)
@@ -119,12 +129,27 @@ struct FloatingWindow<Content: View>: View {
         .gesture(
             DragGesture()
                 .onChanged { value in
-                    if !isResizing {
-                        isDragging = true
+                    if !isResizing, !isDragging {
+                        let y = value.startLocation.y - (position.y - size.height/2)
+                        if y > 0, y < 44 {
+                            isDragging = true
+                        } else if y > size.height-44 {
+                            isResizing = true
+                        }
+                    }
+                    
+                    if isDragging {
                         dragOffset = value.translation
+                    } else if isResizing {
+                        let proposedWidth = size.width + value.translation.width
+                        let proposedHeight = size.height + value.translation.height
+                        
+                        resizeDelta = CGSize(
+                            width: max(minSize.width, proposedWidth) - size.width,
+                            height: max(minSize.height, proposedHeight) - size.height)
                     }
                 }
-                .onEnded { _ in
+                .onEnded { value in
                     if isDragging {
                         let newX = position.x + dragOffset.width
                         let newY = position.y + dragOffset.height
@@ -133,6 +158,14 @@ struct FloatingWindow<Content: View>: View {
                         position.y = max(size.height/2, min(newY, containerSize.height-size.height/2))
                         dragOffset = .zero
                         isDragging = false
+                    } else if isResizing {
+                        position.x += resizeDelta.width/2
+                        position.y += resizeDelta.height/2
+                        size.width += resizeDelta.width
+                        size.height += resizeDelta.height
+
+                        resizeDelta = .zero
+                        isResizing = false
                     }
                 }
         )
@@ -164,7 +197,7 @@ struct FloatingWindow<Content: View>: View {
         .padding(.horizontal, 8)
         .padding(.top, 4)
         .frame(height: 44)
-        .background(Material.regular)
+        .background(isDragging ? Material.thickMaterial : Material.regular)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8))
     }
 }
@@ -173,28 +206,39 @@ struct ResizeHandle: View {
     @Binding var size: CGSize
     @Binding var resizeDelta: CGSize
     @Binding var position: CGPoint
+    let containerSize: CGSize
+    let roundSizeRegion = 44.0
     
     var body: some View {
-        Rectangle()
-            .fill(Color.red)
-            .frame(width: 20, height: 20)
-            .cornerRadius(4)
-            .position(x: size.width - 10 + resizeDelta.width/2,
-                      y: size.height - 10 + resizeDelta.height/2)
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        print("here \(value.translation)")
-                        resizeDelta = value.translation
-                    }
-                    .onEnded { value in
-                        position.x += value.translation.width/2
-                        position.y += value.translation.height/2
-                        resizeDelta = .zero
-                        size.width += value.translation.width
-                        size.height += value.translation.height
-                    }
+        Canvas { context, size in
+            let radius = 10.0
+            let center = CGPoint(x: 31, y: 31)
+            let startAngle = Angle.degrees(0)
+            let endAngle = Angle.degrees(90)
+            
+            var path = Path()
+            path.addArc(
+                center: center,
+                radius: radius,
+                startAngle: startAngle,
+                endAngle: endAngle,
+                clockwise: false
             )
+            
+            context.stroke(
+                path,
+                with: resizeDelta != .zero ? .color(.white) : .color(.secondary),
+                style: StrokeStyle(
+                    lineWidth: 3,
+                    lineCap: .round,
+                    lineJoin: .round
+                )
+            )
+        }
+        .frame(width: roundSizeRegion, height: roundSizeRegion)
+        .cornerRadius(4)
+        .position(x: size.width - roundSizeRegion/2 + resizeDelta.width,
+                  y: size.height - roundSizeRegion/2 + resizeDelta.height)
     }
 }
 
