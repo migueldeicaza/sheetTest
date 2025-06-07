@@ -50,15 +50,7 @@ struct ContentView: View {
     }
     var body: some View {
         GeometryReader { geometry in
-            let _ = print("Geo=\(geometry.size)")
             ZStack(alignment: .topLeading) {
-                Color.yellow
-                Color.blue
-                    .position(x: 0, y: floatingRect.midY)
-                    .frame(width: 100, height: floatingRect.height)
-                Color.blue
-                    .position(x: 300, y: keyboardFrame.midY-20)
-                    .frame(width: 100, height: keyboardFrame.height)
                 VStack {
                     Button("Toggle Floating Window") {
                         showFloating.toggle()
@@ -69,13 +61,21 @@ struct ContentView: View {
                 }
                 if showFloating {
                     FloatingWindow(
+                        title: "This is my Window",
                         containerSize: geometry.size,
                         position: $windowPosition,
                         size: $windowSize,
                         isVisible: $showFloating,
-                        debugFloatingFrame: $floatingRect,
-                        debugKeyboardFrame: $keyboardFrame,
-                        content: { windowContent }
+                        content: { windowContent },
+                        menu: {
+                            Menu {
+                                Button("First Button") {}
+                            } label: {
+                                Image(systemName: "gear")
+                                    .font(.title2)
+                            }
+                            .foregroundStyle(.gray)
+                        }
                     )
                 }
             }
@@ -104,15 +104,19 @@ struct ContentView: View {
 }
 
 // Requires the container to have a .coordinateSpace(.named("container"))
-struct FloatingWindow<Content: View>: View {
-    let containerSize: CGSize
+struct FloatingWindow<Content: View, MenuContent: View>: View {
+    let title: String
+    // The size of the container where our floating window lives
+    var containerSize: CGSize
+    // the position of our window
     @Binding var position: CGPoint
+    // the size of our window
     @Binding var size: CGSize
+    // we use this to control on/off
     @Binding var isVisible: Bool
-    @Binding var debugFloatingFrame: CGRect
-    @Binding var debugKeyboardFrame: CGRect
-    @State var keyboardHeight: CGFloat = 0
+    
     let content: () -> Content
+    let menu: () -> MenuContent
     
     @State private var dragOffset = CGSize.zero
     @State private var isDragging = false
@@ -124,6 +128,12 @@ struct FloatingWindow<Content: View>: View {
     /// Our canvas size in screen coordinates, this is used only to avoid the keyboard if it shows up
     @State var floatingAbsoluteFrame: CGRect = .zero
     @State var keyboardAbsoluteFrame: CGRect = .zero
+    
+    // When the keyboard goes away, this variable determines whether we will
+    // restore the original window location before the keyboard was moved.
+    //
+    // If the user manipulated the window while the keyboard is up, we do not restore it
+    @State var restoreFrame = true
 
     private var adjustedYPosition: CGFloat {
         if keyboardAbsoluteFrame.height > 0, keyboardAbsoluteFrame.minY < floatingAbsoluteFrame.maxY {
@@ -151,8 +161,6 @@ struct FloatingWindow<Content: View>: View {
             return $0.frame(in: .global)
         } action: { newValue in
             floatingAbsoluteFrame = newValue
-            debugFloatingFrame = newValue
-
         }
         .frame(width: size.width + resizeDelta.width,
                height: size.height + resizeDelta.height)
@@ -194,6 +202,10 @@ struct FloatingWindow<Content: View>: View {
                         position.y = max(size.height/2, min(newY, containerSize.height-size.height/2))
                         dragOffset = .zero
                         isDragging = false
+                        
+                        if keyboardAbsoluteFrame.height != 0 {
+                            restoreFrame = false
+                        }
                     } else if isResizing {
                         position.x += resizeDelta.width/2
                         position.y += resizeDelta.height/2
@@ -202,49 +214,72 @@ struct FloatingWindow<Content: View>: View {
 
                         resizeDelta = .zero
                         isResizing = false
+                        
+                        // If the keyboard is showing and the user resized, do not restore the old
+                        
+                        if keyboardAbsoluteFrame.height != 0 {
+                            restoreFrame = false
+                        }
                     }
                 }
         )
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
             if let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
                 keyboardAbsoluteFrame = keyboardFrame
-                self.debugKeyboardFrame = keyboardFrame
-                //if floatingAbsoluteFrame.minY
                 
                 oldPosition = position
                 oldSize = size
                 if keyboardAbsoluteFrame.height > 0, keyboardAbsoluteFrame.minY < floatingAbsoluteFrame.maxY {
+                    // Ok, our window would be obscured by the keyboard coming up from below, so we need to
+                    // change its position, but first, make sure we have space for it, and also adjust the
+                    // size (just the height)
+                    
+                    // How much space do we actually have?
+                    // turn our floatingAbsoluteFrame.origin into the local coordinate, based on
+                    // its position and size (because the position is to the middle, we have to do the
+                    // size.height/2 dance
+                    let diffY = floatingAbsoluteFrame.origin.y - (position.y - size.height/2)
+
+                    let available = containerSize.height + diffY - keyboardAbsoluteFrame.height
+
+                    restoreFrame = true
                     withAnimation {
-                        // Ok, this is sort of lame, it only pushes the window up the necessary space,
-                        // it looks good, but is not perfect, there might not be enough space, so we need
-                        // to also shrink if needed
-                        position = CGPoint(x: position.x, y: position.y - (floatingAbsoluteFrame.maxY - keyboardAbsoluteFrame.minY))
+                        // If we do not have enough space, shrink the window
+                        if available < size.height {
+                            size.height = available
+                            position = CGPoint(
+                                x: position.x,
+                                y: available/2)
+                        } else {
+                            // We have space, so just reposition
+                            position = CGPoint(
+                                x: position.x,
+                                y: position.y - (floatingAbsoluteFrame.maxY - keyboardAbsoluteFrame.minY)
+                            )
+                        }
                     }
                 }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             keyboardAbsoluteFrame = .zero
-            withAnimation {
-                position = oldPosition
-                size = oldSize
+            if restoreFrame {
+                withAnimation {
+                    position = oldPosition
+                    size = oldSize
+                }
             }
         }
     }
     @State var oldPosition = CGPoint.zero
     @State var oldSize = CGSize.zero
     
+    @ViewBuilder
     private var titleBar: some View {
         HStack {
-            Menu {
-                Button("aa") {}
-            } label: {
-                Image(systemName: "gear")
-                    .font(.title2)
-            }
-            .foregroundStyle(.gray)
+            menu()
             Spacer()
-            Text("Chat Window")
+            Text(title)
                 .foregroundColor(.secondary)
             Spacer()
 
