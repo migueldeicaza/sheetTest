@@ -6,19 +6,26 @@
 //
 
 import SwiftUI
+import Combine
 
 struct ContentView: View {
     @State var showConfiguration = false
     @State var showFloating = true
+    // The position of the floating window
     @State var windowPosition: CGPoint = .zero
+    // The size of the floating window
     @State var windowSize: CGSize = .zero
+    @State var oldWindowSize: CGSize = .zero
     @State var text = ""
     @State private var hasInitialized = false
+    @State var floatingRect: CGRect = .zero
+    @State var keyboardFrame: CGRect = .zero
     
     var windowContent: some View {
-        VStack {
-            Text("This is the content for the window")
-            TextField("DEmo", text: $text)
+        VStack(alignment: .leading) {
+            Text("Welcome to Claude for Xogot")
+            Spacer()
+            TextField("Enter your question", text: $text)
         }
         .padding()
         .background(Material.ultraThin)
@@ -44,8 +51,14 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             let _ = print("Geo=\(geometry.size)")
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 Color.yellow
+                Color.blue
+                    .position(x: 0, y: floatingRect.midY)
+                    .frame(width: 100, height: floatingRect.height)
+                Color.blue
+                    .position(x: 300, y: keyboardFrame.midY-20)
+                    .frame(width: 100, height: keyboardFrame.height)
                 VStack {
                     Button("Toggle Floating Window") {
                         showFloating.toggle()
@@ -54,17 +67,19 @@ struct ContentView: View {
                 .sheet(isPresented: $showConfiguration) {
                     Text("This code will display the Configuration View")
                 }
-                
                 if showFloating {
                     FloatingWindow(
                         containerSize: geometry.size,
                         position: $windowPosition,
                         size: $windowSize,
                         isVisible: $showFloating,
+                        debugFloatingFrame: $floatingRect,
+                        debugKeyboardFrame: $keyboardFrame,
                         content: { windowContent }
                     )
                 }
             }
+            .coordinateSpace(.named("container"))
             .onAppear {
                 if !hasInitialized {
                     let containerWidth = geometry.size.width
@@ -88,11 +103,15 @@ struct ContentView: View {
     }
 }
 
+// Requires the container to have a .coordinateSpace(.named("container"))
 struct FloatingWindow<Content: View>: View {
     let containerSize: CGSize
     @Binding var position: CGPoint
     @Binding var size: CGSize
     @Binding var isVisible: Bool
+    @Binding var debugFloatingFrame: CGRect
+    @Binding var debugKeyboardFrame: CGRect
+    @State var keyboardHeight: CGFloat = 0
     let content: () -> Content
     
     @State private var dragOffset = CGSize.zero
@@ -102,12 +121,23 @@ struct FloatingWindow<Content: View>: View {
     @State var resizeDelta = CGSize.zero
     let minSize: CGSize = .init(width: 200, height: 200)
     
+    /// Our canvas size in screen coordinates, this is used only to avoid the keyboard if it shows up
+    @State var floatingAbsoluteFrame: CGRect = .zero
+    @State var keyboardAbsoluteFrame: CGRect = .zero
+
+    private var adjustedYPosition: CGFloat {
+        if keyboardAbsoluteFrame.height > 0, keyboardAbsoluteFrame.minY < floatingAbsoluteFrame.maxY {
+            print("We have a problem, about \(floatingAbsoluteFrame.maxY-keyboardAbsoluteFrame.minY)")
+        }
+        return position.y
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             titleBar
             content()
-                .frame(width: size.width + resizeDelta.width,
-                       height: size.height - 44 + resizeDelta.height)
+                .frame(width: max(minSize.width, size.width + resizeDelta.width),
+                       height: max(minSize.height, size.height - 44 + resizeDelta.height))
         }
         .overlay(
             ResizeHandle(
@@ -117,7 +147,13 @@ struct FloatingWindow<Content: View>: View {
                 containerSize: containerSize
             )
         )
-        
+        .onGeometryChange(for: CGRect.self) {
+            return $0.frame(in: .global)
+        } action: { newValue in
+            floatingAbsoluteFrame = newValue
+            debugFloatingFrame = newValue
+
+        }
         .frame(width: size.width + resizeDelta.width,
                height: size.height + resizeDelta.height)
         .background(Material.ultraThin)
@@ -125,7 +161,7 @@ struct FloatingWindow<Content: View>: View {
         .shadow(radius: 10)
         .position(
             x: position.x + dragOffset.width + resizeDelta.width/2,
-            y: position.y + dragOffset.height + resizeDelta.height/2)
+            y: adjustedYPosition + dragOffset.height + resizeDelta.height/2)
         .gesture(
             DragGesture()
                 .onChanged { value in
@@ -169,30 +205,55 @@ struct FloatingWindow<Content: View>: View {
                     }
                 }
         )
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
+            if let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
+                keyboardAbsoluteFrame = keyboardFrame
+                self.debugKeyboardFrame = keyboardFrame
+                //if floatingAbsoluteFrame.minY
+                
+                oldPosition = position
+                oldSize = size
+                if keyboardAbsoluteFrame.height > 0, keyboardAbsoluteFrame.minY < floatingAbsoluteFrame.maxY {
+                    withAnimation {
+                        // Ok, this is sort of lame, it only pushes the window up the necessary space,
+                        // it looks good, but is not perfect, there might not be enough space, so we need
+                        // to also shrink if needed
+                        position = CGPoint(x: position.x, y: position.y - (floatingAbsoluteFrame.maxY - keyboardAbsoluteFrame.minY))
+                    }
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardAbsoluteFrame = .zero
+            withAnimation {
+                position = oldPosition
+                size = oldSize
+            }
+        }
     }
+    @State var oldPosition = CGPoint.zero
+    @State var oldSize = CGSize.zero
     
     private var titleBar: some View {
         HStack {
             Menu {
-                
+                Button("aa") {}
             } label: {
-                Text("xx")
+                Image(systemName: "gear")
+                    .font(.title2)
             }
+            .foregroundStyle(.gray)
             Spacer()
-            Text("Floating Window")
-                .font(.caption)
+            Text("Chat Window")
                 .foregroundColor(.secondary)
             Spacer()
-            
-            Button(action: {
-                // TODO
-            }) {
-                Text("New")
-            }
+
             Button(action: { isVisible = false }) {
-                Image(systemName: "xmark")
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
             }
             .foregroundColor(.secondary)
+            
         }
         .padding(.horizontal, 8)
         .padding(.top, 4)
